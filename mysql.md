@@ -3,7 +3,7 @@
 ~~ 删除线
 
 ## 行锁
-  : record lock
+  : **record lock**
   ```
   select * from a where id= 1 for update
   ```
