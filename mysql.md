@@ -23,7 +23,8 @@ update a set b=1 where id>2 and id<50
 ```
 
 ## 表锁
-1、 
-2、  
+1. asfasdf
+2. safdasfd
+3. asfasdfsdf  
 
 
