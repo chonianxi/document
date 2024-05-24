@@ -1,6 +1,6 @@
 # mysql
 
-~~删除线
+~~ 删除线
 
 ## 行锁
   : record lock
