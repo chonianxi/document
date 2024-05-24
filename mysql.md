@@ -1,16 +1,16 @@
 # mysql
 
 ## 行锁
-  record lock
+  :record lock
   ```
   select * from a where id= 1 for update
   ```
-  next-key lock
+  :next-key lock
 ```
 update a set b=1 where id>10
 ```
   
-  gap lock
+  :gap lock
 ```
 update a set b=1 where id>2 and id<50
 ```
