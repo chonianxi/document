@@ -5,10 +5,12 @@
 
 ## 行锁
   : **record lock**
+  >锁住id=1的那一行
   ```
   select * from a where id= 1 for update
   ```
   : next-key lock
+  >如果存在id>10的则是next-key lock 否则就是无锁
 ```
 update a set b=1 where id>10
 ```
