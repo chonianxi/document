@@ -18,6 +18,7 @@ update a set b=1 where id>2 and id<50
 ```
 
 ## 表锁
-
+1、 
+2、  
 
 
