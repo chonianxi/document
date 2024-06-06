@@ -8,7 +8,7 @@
 AUTO_RANDOM(S, R) S 表示分片位的数量，取值范围是 1 到 15。默认为 5。R 表示自动分配值域的总长度，取值范围是 32 到 64。默认为 64。
 从V7.1开始，可以设置tidb_load_based_replica_read_threshold 系统变量控制读请求的排队长度。当 leader 节点的预估排队时间超过该阈值时，TiDB 会优先从 follower 节点读取数据。
 ```
-
+***
 ## 异步添加索引
 >原理
 ```
