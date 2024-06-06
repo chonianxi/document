@@ -16,7 +16,7 @@ AUTO_RANDOM(S, R) S 表示分片位的数量，取值范围是 1 到 15。默认
 ```
 >优化设置
 ```
-设置tidb_ddl_reorg_worker_cnt 工作线程默认4，回填批次数据大小tidb_ddl_reorg_batch_size 默认128
+设置tidb_ddl_reorg_worker_cnt 工作线程默认4建议不要超过16，回填批次数据大小tidb_ddl_reorg_batch_size 默认128建议不要更改该值
 ```
 ## 索引优化
 >1、能走主键的走主键，减少回表，使用最左前缀<br/>
