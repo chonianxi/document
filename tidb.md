@@ -26,7 +26,7 @@ AUTO_RANDOM(S, R) S 表示分片位的数量，取值范围是 1 到 15。默认
 
 ***
 ## ANALYZE 
->ANALYZE table t1;对表的索引进行分析和更新
+>ANALYZE table t1;对表的索引进行分析和重构
 
 
 
