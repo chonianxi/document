@@ -33,6 +33,7 @@ AUTO_RANDOM(S, R) S 表示分片位的数量，取值范围是 1 到 15。默认
 >1、能批量的用批量，插入更新都是<br/>
 >2、返回数据的时候，只返回需要的数据，不要返回全量数据 <BR/>
 >3、尽量使用truncate和DROP,不要使用delete，会产生大量的BINLOG
+>4、设置tidb_mem_quota_query单条SQL查询占用的最大内存单位为字节，默认值为32G
 
 
 
