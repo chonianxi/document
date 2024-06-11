@@ -12,5 +12,6 @@
 2、发送JoinGroup请求给Group Coordinator，Group Coordinator从消费组里面选出consumer leader 并发送给他所有的成员列表和订阅信息
 3、consumer leader生成消费分区分配方案后，发送Sync Group 请求给Group Coordinator,Group Coordinator 会向所有消费者发送 JoinGroupResponse (加入消费者组)的响应，并广播 Leader 制定的分区分配方案
 参考https://www.bilibili.com/read/cv28285172/
+log文件(存储消息),index文件(消息的偏移量索引),timestamp文件(消息的时间戳索引)
 ```
 
