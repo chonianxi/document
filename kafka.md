@@ -8,7 +8,9 @@
 >LeaveGroup请求：主动告诉coordinator我要离开consumer group  
 >DescribeGroup请求：显示组的所有信息，包括成员信息，协议名称，分配方案，订阅信息等。通常该请求是给管理员使用
 ```
-1、所有消费组成员发送JoinGroup请求给Cooordinator
-2、
+1、所有消费组成员向broker发送findGroupCoordinator 获得负责其组的Group Coordinator
+2、发送JoinGroup请求给Group Coordinator，Group Coordinator从消费组里面选出consumer leader 并发送给他所有的成员列表和订阅信息
+3、consumer leader生成消费分区分配方案后，发送Sync Group 请求给Group Coordinator,Group Coordinator 会向所有消费者发送 JoinGroupResponse (加入消费者组)的响应，并广播 Leader 制定的分区分配方案
+参考https://www.bilibili.com/read/cv28285172/
 ```
 
