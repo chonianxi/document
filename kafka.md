@@ -8,6 +8,7 @@
 >LeaveGroup请求：主动告诉coordinator我要离开consumer group  
 >DescribeGroup请求：显示组的所有信息，包括成员信息，协议名称，分配方案，订阅信息等。通常该请求是给管理员使用
 ```
-所有消费组成员发送JoinGroup请求给Cooordinator
+1、所有消费组成员发送JoinGroup请求给Cooordinator
+2、
 ```
 
