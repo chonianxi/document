@@ -19,10 +19,10 @@ SHARD_ROW_ID_BITS = 5 表示 tidb_rowid 的值会随机分布成 32 (32=2^5) 个
 PRE_SPLIT_REGIONS=4 表示建完表后提前切分出 16 (2^4) 个 Region。
 CREATE TABLE t_test(
 paimary_id bingint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
-logic_id bingint(20) NOT NULL,
+id bingint(20) NOT NULL,
 
 PRIMARY KEY(paimary_id)/*T![clustered_index] CLUSTERED */,
-UNIQUE KEY uk_logic_id(logic_id)
+UNIQUE KEY uk_id(id)
 )ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PRE_SPLIT_REGIONS=4;
 
 https://docs.pingcap.com/zh/tidb/stable/dm-manage-source/
