@@ -10,10 +10,18 @@
 
 注意事项：
 1、主键不能自增长，会有热点问题，使用/*T![auto_rand] AUTO_RANDOM(6) */
+2、表字段值不允许为空
 2、视图能否迁移过去，还有存储过程，触发器
 3、C端接口不要count分页，直接下一页下一页
 
-TiDB 默认使用的字符集为 utf8mb4。建议同步上下游及应用统一使用 utf8mb4
+
+TIDB建表注意事项：
+1、主键不能自增长，会有热点问题，使用/*T![auto_rand] AUTO_RANDOM(6) */
+2、表字段值不允许为空
+3、数据库表字符集为 utf8mb4
+4、对于大数据的表，建表增加PRE_SPLIT_REGIONS=4;提前分配(2^4) 个 Region
+
+
 针对注单这样的大表
 SHARD_ROW_ID_BITS = 5 PRE_SPLIT_REGIONS=4;只能用于AUTO_RANDOM
 SHARD_ROW_ID_BITS = 5 表示 tidb_rowid 的值会随机分布成 32 (32=2^5) 个范围区间。
@@ -34,7 +42,13 @@ tidb_ddl_reorg_batch_size：这个变量用来设置 DDL 操作 re-organize 阶�
 在无其他负载情况下，如需让 ADD INDEX 尽快完成，可以将 tidb_ddl_reorg_worker_cnt 和 tidb_ddl_reorg_batch_size 的值适当调大，例如将两个变量值分别调为 20 和 2048。
 在有其他负载情况下，如需让 ADD INDEX 尽量不影响其他业务，可以将 tidb_ddl_reorg_worker_cnt 和 tidb_ddl_reorg_batch_size 适当调小，例如将两个变量值分别调为 4 和 256
 
-
+迁移完成前
+CREATE TABLE user (
+  id BIGINT PRIMARY KEY,
+  name VARCHAR(50)
+);
+迁移完成后
+ALTER TABLE user MODIFY COLUMN id BIGINT PRIMARY KEY AUTO_RANDOM(5);
 
 URL加密前后端，梳理使用注单表的场景然后看怎么优化
 后续进行服务治理&资损监控
