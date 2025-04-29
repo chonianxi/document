@@ -53,6 +53,8 @@ ALTER TABLE user MODIFY COLUMN id BIGINT PRIMARY KEY AUTO_RANDOM(5);
 生产环境保持默认 OFF，迁移/特殊情况可临时设为 ON
 SET GLOBAL allow_auto_random_explicit_insert = ON;
 
+SHOW TABLE t_user_voucher REGIONS;
+
 测试环境
 TiDB：3 个节点，每个节点 8 核 64GB RAM。
 TiKV：3 个节点，每个节点 8 核 64GB RAM，SSD 磁盘。
