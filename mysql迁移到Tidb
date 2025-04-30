@@ -92,7 +92,7 @@ SET GLOBAL allow_auto_random_explicit_insert = ON;
 再使用insert into select 语句把迁移过来的原表数据插入到临时表，
 再设置SET GLOBAL allow_auto_random_explicit_insert = OFF;
 2.2迁移模块代码层面适配TIDB 三天
-主要工作1、将原代码中的主键统一设置为数据库自动生成,@TableId(type = IdType.AUTO)
+主要工作1、将源代码中的主键统一设置为数据库自动生成,@TableId(type = IdType.AUTO)
 2、如果需要涉及插入后拿到主键的应用，通过对象可以拿到
 2.3迁移模块测试用例编写 三天
 3.1测试环境迁移模块迁移数据 两天
