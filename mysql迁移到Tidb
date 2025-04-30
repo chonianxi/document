@@ -87,7 +87,13 @@ URL加密前后端，梳理使用注单表的场景然后看怎么优化
 
 1测试环境搭建TIDB和DM迁移工具    一周
 2.1整理需要迁移模块的SQL建表语句到TIDB执行  三天
+主要工作，先建立和原表一样名称的表，再建立AUTO_RANDOM的临时表，两个表结构一模一样；先把数据同步到原表，
+SET GLOBAL allow_auto_random_explicit_insert = ON;
+再使用insert into select 语句把迁移过来的原表数据插入到临时表，
+再设置SET GLOBAL allow_auto_random_explicit_insert = OFF;
 2.2迁移模块代码层面适配TIDB 三天
+主要工作1、将原代码中的主键统一设置为数据库自动生成,@TableId(type = IdType.AUTO)
+2、如果需要涉及插入后拿到主键的应用，通过对象可以拿到
 2.3迁移模块测试用例编写 三天
 3.1测试环境迁移模块迁移数据 两天
 3.2生产搭建TIDB和DM迁移工具 一周
