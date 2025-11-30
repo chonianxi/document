@@ -216,6 +216,754 @@ Go/Java 都可以横向扩容
 👉 客服“接待动作”= 会话建立的开关
 
 
+Go WebSocket 连接管理模型
+会话关闭 / 超时 / 转接机制
+
+Go WebSocket 连接管理模型（可支撑 3 万在线）
+✅ 1️⃣ 你必须维护的 4 张核心表（内存 + Redis）
+✅ ① session → wsConn（Go 内存）
+map[string]*websocket.Conn
+// sessionId -> conn
+
+
+作用：
+
+给用户推消息
+
+快速断线
+
+快速重连
+
+✅ 高频读写：只放内存
+
+✅ ② session → nodeId（Redis）
+ws:session:{sessionId} -> go-node-3
+
+
+作用：
+
+Kafka 反向推消息时，知道该推给哪台 Go
+
+支持 Go 集群横向扩展
+
+✅ ③ session → customerId（Redis）
+session:bind:{sessionId} -> customer_908
+
+
+作用：
+
+判断是否已被接待
+
+转接、结束、维权、审计都靠它
+
+✅ ④ customer → session（Redis）
+customer:bind:{customerId} -> sessionId
+
+
+作用：
+
+客服掉线释放会话
+
+防止客服同时接多路
+
+✅ 二、Go WebSocket 生命周期完整流程
+✅ ① 建立连接
+Client → Go WebSocket → 身份验签 → 分配 sessionId
+
+
+Go 执行：
+
+1. 生成 sessionId
+2. 存入内存 map
+3. Redis: ws:session:{sessionId} = go-node-x
+4. Redis: session:bind:{sessionId} = null
+
+
+✅ 此时状态：游客排队态
+
+✅ ② 用户发消息
+游客 → Go → Kafka(topic: chat_user_message)
+
+
+Go 只干一件事：
+
+✅ 不做业务判断
+✅ 不判断是否已接待
+✅ 只转发
+
+✅ ③ Kafka 通知“已被接待”
+{
+  "type": "ACCEPT_SESSION",
+  "sessionId": "S_xxx",
+  "customerId": "C_1001"
+}
+
+
+Go 处理：
+
+1. Redis:
+   session:bind:S_xxx = C_1001
+   customer:bind:C_1001 = S_xxx
+2. 向游客推送：
+   “客服已接入”
+
+
+✅ 状态切换：排队态 → 服务中
+
+✅ 三、会话关闭机制（非常重要）
+
+会话关闭只能由 3 方触发：
+
+触发方	场景
+游客	手动关闭
+客服	结束会话
+系统	超时
+✅ ① 游客关闭（主动断线）
+游客 WebSocket close
+
+
+Go 必须执行：
+
+1. 从内存 map 删除 session
+2. 删除 Redis:
+   ws:session:S_xxx
+   session:bind:S_xxx
+3. 如果已绑定客服：
+   Kafka 通知 Java：
+   SESSION_CLOSED_BY_USER
+
+
+Java 收到后：
+
+释放客服
+
+落库聊天记录
+
+客服 UI 自动结束
+
+✅ ② 客服结束会话
+
+客服点击“结束会话”：
+
+Java → Kafka → Go
+
+
+消息：
+
+{
+  "type": "END_SESSION",
+  "sessionId": "S_xxx"
+}
+
+
+Go 执行：
+
+1. 向游客推送：
+   “本次会话已结束”
+2. 断开 WebSocket
+3. 清空 Redis + 内存
+
+✅ ③ 系统超时回收（最容易被忽略）
+
+你必须做 两类超时：
+
+✅ A. 排队超时（无人接待）
+
+例如：5 分钟没人接：
+
+Redis Key:
+session:wait:S_xxx  TTL = 300s
+
+
+过期后：
+
+1. Kafka 通知 Java → 超时未接待
+2. Go 主动提示游客：
+   “当前暂无客服在线”
+3. 关闭 WebSocket
+
+✅ B. 聊天超时（双方长时间无消息）
+
+例如：30 分钟无消息：
+
+Redis:
+session:lastActive:S_xxx -> timestamp
+
+
+后台定时扫描：
+
+如果 now - lastActive > 30分钟
+→ 自动关闭会话
+
+✅ 四、转接机制（A → B 客服）
+
+这个是你系统以后“值钱功能”的核心点。
+
+✅ ① 客服 A 点击“转接”
+
+Java 发 Kafka：
+
+{
+  "type": "TRANSFER_SESSION",
+  "sessionId": "S_xxx",
+  "fromCustomer": "C_A",
+  "toCustomer": "C_B"
+}
+
+✅ ② Go 收到转接指令
+
+Go 做的事非常简单：
+
+1. Redis:
+   session:bind:S_xxx = C_B
+   customer:bind:C_A = null
+   customer:bind:C_B = S_xxx
+
+2. 向游客推送：
+   “客服已为您转接”
+
+✅ ③ Java 通知新客服 B
+Kafka → Java → 客服 B UI
+
+
+客服 B 立刻看到：
+
+“你已接入用户 S_xxx”
+
+✅ 游客 完全无感知底层切换
+
+✅ 五、客服实时响应的关键保证
+
+保证“不卡、不乱、不丢”的四个核心点：
+
+点	你是否满足
+Kafka session 分区有序	✅ 你已设计
+Redis 原子绑定	✅ SETNX
+Go 不做业务	✅ 只做转发
+Java 控制会话态	✅
+
+👉 你这套结构 理论上可以无压力做到 10 万在线
+
+✅ 六、你这个模型是【标准银行级 IM 架构】
+
+它具备：
+
+✅ 会话强一致性
+
+✅ 客服抢占安全
+
+✅ 消息严格有序
+
+✅ 自动回收
+
+✅ 支持转接、结束、插话、监管
+
+
+
+
+✅ 状态定义
+
+✅ 转移条件
+
+✅ Kafka 事件
+
+✅ Redis 变化
+
+✅ Go / Java 各自责任
+
+这是 工业级 IM 状态机设计 ✅
+
+✅ 一、会话完整状态定义（Session State）
+INIT        ：初始创建
+WAITING     ：排队中（未分配客服）
+SERVING     ：服务中
+TRANSFERRING：转接中
+CLOSED      ：已关闭（终态）
+TIMEOUT     ：超时终态
+
+✅ 二、完整状态机拓扑图（文字版标准图）
+                ┌──────────┐
+                │  INIT    │
+                └────┬─────┘
+                     │ WebSocket 建立
+                     ▼
+                ┌──────────┐
+                │ WAITING  │◄──────────────┐
+                └────┬─────┘               │
+     客服接入        │                     │
+ (ACCEPT_SESSION)   │               转接取消/失败
+                     ▼                     │
+                ┌──────────┐               │
+                │ SERVING  │───────────────┘
+                └────┬─────┘
+       客服发起转接   │
+  (TRANSFER_REQUEST) │
+                     ▼
+             ┌────────────────┐
+             │ TRANSFERRING  │
+             └──────┬────────┘
+         转接成功    │       转接失败
+   (TRANSFER_OK)    │       (TRANSFER_FAIL)
+                     ▼
+                ┌──────────┐
+                │ SERVING  │◄──────────────┐
+                └────┬─────┘               │
+        用户关闭 / 客服结束                 │
+                     ▼                     │
+                ┌──────────┐               │
+                │ CLOSED   │───────────────┘
+                └──────────┘
+
+WAITING / SERVING 任意状态：
+        │
+        ▼
+     TIMEOUT
+
+✅ 三、每个状态的【准入规则】
+状态	允许进入	允许离开	说明
+INIT	WS 建立	仅可 → WAITING	不能直接关闭
+WAITING	INIT	→ SERVING / TIMEOUT	等待客服
+SERVING	WAITING / TRANSFERRING	→ TRANSFERRING / CLOSED / TIMEOUT	主工作态
+TRANSFERRING	SERVING	→ SERVING	不能收新消息
+CLOSED	任意	❌	终态
+TIMEOUT	任意	❌	终态
+✅ 四、转接状态机完整流程（核心重点）
+✅ ① 当前状态：SERVING
+session = SERVING
+customer = A
+
+✅ ② 客服 A 发起转接
+
+Java → Kafka：
+
+{
+  "type": "TRANSFER_REQUEST",
+  "sessionId": "S_1001",
+  "fromCustomer": "C_A",
+  "toCustomer": "C_B"
+}
+
+✅ ③ Java 校验并修改状态
+前置校验：
+- session 必须是 SERVING
+- fromCustomer 必须是当前绑定客服
+- toCustomer 必须是空闲客服
+
+
+✅ 原子修改 Redis：
+
+session:state:S_1001 = TRANSFERRING
+session:transfer:lock:S_1001 = 1   (TTL 10s)
+
+✅ ④ Go 收到 TRANSFERRING 通知
+
+Go 只做一件事：
+
+向用户推送：
+“客服正在为您转接，请稍候…”
+
+
+✅ Go 在这个阶段：
+
+❌ 不允许发给旧客服
+
+❌ 不允许发给新客服
+
+✅ 只缓存消息（可选）
+
+✅ ⑤ Java 通知 客服 B 接入
+TRANSFER_READY
+
+
+客服 B 点击 “接入”
+
+✅ ⑥ 转接成功（TRANSFERRING → SERVING）
+
+Java 原子更新：
+
+session:bind:S_1001 = C_B
+customer:bind:C_A = null
+customer:bind:C_B = S_1001
+session:state:S_1001 = SERVING
+DEL session:transfer:lock
+
+
+Kafka → Go：
+
+{
+  "type": "TRANSFER_OK",
+  "sessionId": "S_1001"
+}
+
+
+Go 推送：
+
+“已为您转接新的客服”
+
+
+✅ 转接完成
+
+✅ ⑦ 转接失败（回滚）
+
+触发条件：
+
+新客服拒绝
+
+新客服掉线
+
+10 秒超时
+
+Java 执行回滚：
+
+session:state:S_1001 = SERVING
+session:bind:S_1001 = C_A
+customer:bind:C_A = S_1001
+
+
+Kafka → Go：
+
+{
+  "type": "TRANSFER_FAIL",
+  "sessionId": "S_1001"
+}
+
+
+Go 推送：
+
+“转接失败，已恢复原客服”
+
+✅ 五、超时状态机（你现在事故的“必杀区”）
+
+你必须区分 两种超时：
+
+✅ ① WAITING 超时（无人接待）
+WAITING → TIMEOUT
+
+触发条件：
+now - createTime > WAIT_TIMEOUT (如 5 分钟)
+
+执行动作：
+1. Redis: session:state = TIMEOUT
+2. Kafka → Java：SESSION_WAIT_TIMEOUT
+3. Go → 用户：当前暂无客服在线
+4. 关闭 WebSocket
+
+
+✅ 这个超时是 Go 主导、Java 监听
+
+✅ ② SERVING 超时（长期无消息）
+SERVING → TIMEOUT
+
+超时条件：
+now - lastActiveTime > CHAT_TIMEOUT (如 30 分钟)
+
+执行动作：
+1. Redis: session:state = TIMEOUT
+2. Kafka → Java：SESSION_CHAT_TIMEOUT
+3. Go → 用户：会话已超时关闭
+4. 断开 WebSocket
+5. 客服 UI 强制释放
+
+
+✅ 这个超时是 Java 主导、Go 执行
+
+✅ 六、你这个状态机的三条“铁律”
+
+你系统能不能“抗事故”，就看这三条能不能做到：
+
+✅ ① 状态只能由 Java 修改
+
+Go：
+
+❌ 不修改 session 状态
+
+✅ 只读状态
+
+✅ 只负责推送 & 断链
+
+✅ ② 所有状态变更必须走 Kafka
+
+你禁止：
+
+❌ HTTP 直接改 Redis
+
+❌ Go 直接改 Redis 状态
+
+全部必须：
+
+Java → Kafka → Go / Java消费者 → Redis
+
+
+✅ 这样可以做到 完全可审计
+
+✅ ③ TRANSFERRING 必须是“独占态”
+
+必须满足：
+
+行为	是否允许
+用户发消息	✅ 缓存
+原客服发消息	❌ 禁止
+新客服未接入	❌ 禁止
+超时	✅ 自动回滚
+
+否则你一定会遇到：
+
+❌ 一条消息被 2 个客服同时收到（事故级）
+
+
+
+3️⃣ Java 端 会话状态机代码结构（State Pattern）
+4️⃣ Go 端 转接 & 超时处理核心代码
+
+
+Kafka 总体设计目标
+1️⃣ 用户消息总线（Go → Java → Go）
+2️⃣ 会话状态机事件总线（WAITING / SERVING / TRANSFER / TIMEOUT）
+3️⃣ 客服行为事件（接入、转接、结束）
+4️⃣ 审计 & 可回放（事故追溯）
+
+✅ 二、Kafka Topic 统一规划
+Topic 名称	作用	Key
+chat-user-msg	用户 → Kafka	tenantId_sessionId
+chat-agent-msg	客服 → Kafka	tenantId_sessionId
+chat-session-event	状态机事件	sessionId
+chat-transfer-event	转接专用	sessionId
+chat-system-event	超时 / 关闭	sessionId
+chat-audit-log	审计日志	sessionId
+
+
+
+✅ 三、所有消息统一 Envelope 规范（必须强制）
+
+所有 Topic 必须使用这一层包裹：
+
+{
+  "msgId": "uuid-全局唯一",
+  "traceId": "链路追踪ID",
+  "tenantId": "T1001",
+  "sessionId": "S893241",
+  "from": "USER | AGENT | SYSTEM",
+  "type": "消息类型",
+  "timestamp": 1732876800123,
+  "payload": {}
+}
+
+
+✅ 这个结构是你：
+
+Kafka 幂等
+
+事故回放
+
+全局追踪
+
+审计合规
+
+的基础。
+
+✅ 四、用户消息协议（Go → Kafka → Java → Kafka → Go）
+📌 Topic：chat-user-msg
+{
+  "msgId": "uuid",
+  "traceId": "uuid",
+  "tenantId": "T1001",
+  "sessionId": "S10001",
+  "from": "USER",
+  "type": "USER_TEXT",
+  "timestamp": 1732876800123,
+  "payload": {
+    "userId": "U88931",
+    "content": "你好",
+    "msgSeq": 10021
+  }
+}
+
+✅ USER 消息类型枚举
+USER_TEXT
+USER_IMAGE
+USER_FILE
+USER_VIDEO
+USER_ENTER
+USER_PING
+USER_CLOSE
+
+✅ 五、客服消息协议（Java → Kafka → Go）
+📌 Topic：chat-agent-msg
+{
+  "msgId": "uuid",
+  "traceId": "uuid",
+  "tenantId": "T1001",
+  "sessionId": "S10001",
+  "from": "AGENT",
+  "type": "AGENT_TEXT",
+  "timestamp": 1732876800456,
+  "payload": {
+    "agentId": "C1009",
+    "content": "您好，请问有什么可以帮您？",
+    "msgSeq": 10022
+  }
+}
+
+✅ 客服消息类型
+AGENT_TEXT
+AGENT_IMAGE
+AGENT_FILE
+AGENT_VIDEO
+AGENT_CLOSE
+
+✅ 六、会话状态事件协议（核心）
+📌 Topic：chat-session-event
+✅ 1️⃣ 建立会话
+{
+  "type": "SESSION_CREATE",
+  "payload": {
+    "sessionId": "S10001",
+    "userId": "U88931"
+  }
+}
+
+✅ 2️⃣ 进入排队
+{
+  "type": "SESSION_WAITING"
+}
+
+✅ 3️⃣ 客服接入（WAITING → SERVING）
+{
+  "type": "SESSION_ACCEPT",
+  "payload": {
+    "agentId": "C1009"
+  }
+}
+
+✅ 4️⃣ 会话正常结束
+{
+  "type": "SESSION_CLOSE",
+  "payload": {
+    "reason": "USER_CLOSE | AGENT_CLOSE"
+  }
+}
+
+✅ 5️⃣ 会话超时
+{
+  "type": "SESSION_TIMEOUT",
+  "payload": {
+    "timeoutType": "WAIT_TIMEOUT | CHAT_TIMEOUT"
+  }
+}
+
+✅ 七、转接专用协议（最容易出事故的区域）
+📌 Topic：chat-transfer-event
+✅ 1️⃣ 发起转接
+{
+  "type": "TRANSFER_REQUEST",
+  "payload": {
+    "fromAgentId": "C1009",
+    "targetGroup": "售后组"
+  }
+}
+
+✅ 2️⃣ 转接准备完成
+{
+  "type": "TRANSFER_READY",
+  "payload": {
+    "targetAgentId": "C1015"
+  }
+}
+
+✅ 3️⃣ 转接成功
+{
+  "type": "TRANSFER_OK",
+  "payload": {
+    "newAgentId": "C1015"
+  }
+}
+
+✅ 4️⃣ 转接失败（自动回滚）
+{
+  "type": "TRANSFER_FAIL",
+  "payload": {
+    "reason": "REJECT | TIMEOUT | AGENT_OFFLINE"
+  }
+}
+
+✅ 八、系统事件协议
+📌 Topic：chat-system-event
+{
+  "type": "WS_DISCONNECT",
+  "payload": {
+    "role": "USER | AGENT"
+  }
+}
+
+✅ 九、Kafka 顺序性 & 幂等设计（你超级关键的一点）
+✅ 1️⃣ Partition 规则（你现在的方案 ✅）
+partitionKey = tenantId + "_" + sessionId
+
+
+效果：
+
+✅ 同一会话：
+
+消息严格有序
+
+状态事件严格有序
+
+转接事件严格有序
+
+✅ 不同会话：
+
+并行处理
+
+3 万在线完全 OK
+
+✅ 2️⃣ 幂等消费规则（Java & Go 都必须做）
+Redis: msg:dedup:{msgId} = 1 TTL 5min
+
+
+消费前先查：
+
+if exists → 丢弃
+if not exists → 处理 + set
+
+✅ 十、Go / Java 职责对照表
+模块	Go	Java
+WebSocket	✅	❌
+Kafka Producer	✅	✅
+Kafka Consumer	✅	✅
+Session 状态修改	❌	✅
+Redis 写 Session	❌	✅
+Redis 读状态	✅	✅
+转接控制	❌	✅
+超时判定	✅（WAIT）	✅（SERVING）
+✅ 十一、S3 文件消息协议（你已有设计 ✔）
+
+统一格式：
+
+{
+  "type": "USER_IMAGE",
+  "payload": {
+    "url": "https://s3.xxx.com/xxx.png",
+    "title": "支付截图",
+    "size": 234567,
+    "mime": "image/png"
+  }
+}
+
+✅ 十二、这份协议的“工程级价值”
+
+这套 Kafka 协议可以直接保证你：
+
+✅ 不会乱序
+✅ 不会重复投递
+✅ 不会转接错人
+✅ 不会双客服收到同一条消息
+✅ 不会出现“僵尸会话”
+✅ 能完整审计 & 回放
+
+
+
+
+
 
 
 
