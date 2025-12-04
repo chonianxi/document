@@ -26,7 +26,8 @@ TLS 终端：建议由 Ingress/LoadBalancer（NGINX/ALB）做 TLS，Go 节点运
 速率限制 / WAF：用 Redis token bucket 或 NGW（NGINX/Kong）做 IP/tenant 级限流与防护。
 回调/Webhook：仍由 Java 后端负责（重试/DLQ/签名），不要把回调逻辑放到 Go 层。
 
-kafka partition策略：租户ID+会话陌陌hash数字
+sessionId生成策略用MurmurHash3 ，如果客户传了sessionId则不生成，sessionId保存在redis，有效期1小时，最多可以续期一次；
+kafka partition策略：租户ID+sessionId
 Go 节点内存泄漏/连接泄露
 必要：心跳检测 + idle timeout + session TTL in Redis + graceful drain on SIGTERM。
 Upload presign 滥用
