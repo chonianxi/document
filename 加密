@@ -1,5 +1,5 @@
 我是Java 开发主管，用的spring boot 和mybatis，我需要将数据库里面某些表的手机号，银行卡等明文字段进行加解密处理，需要同时能兼容新旧数据，业务不停摆，用户无感知；加解密方式为AES同时引入KMS；因为数据库里面是AES+KMS加密并使用了随机，导致AES每次结果会变，这样需要数据库里面增加一个字段保存明文的hash值，用于精确匹配；为了实现这些字段能支持模糊查询和匹配，我引入EdgeNGram进行明文的处理，然后将明文分词的结果进行HMAC加密处理存入ElasticSearch，在elasticSearch里面保存了该密文匹配结果的数据库里面的主键，这样我通过主键去反查数据库能得到符合条件的完整记录；EdgeNGram进行明文的处理，然后将明文分词的结果进行加密处理存入ElasticSearch这个走kafka的方式，这样不影响主业务；
-我需要设计成jar包的方式给各个需要的项目使用，mybatis-plus 3.5.16,elasticsearch 8.19.10,给我实现
+我需要设计成jar包的方式给各个需要的项目使用，功能要做到侵入式少，对内存CPUIO优化，使用mybatis-plus 3.5.16,elasticsearch 8.19.10,给我实现
 1、MyBatis 字段级透明加解密插件设计
 2、AES + KMS + HMAC Java 标准实现模板
 3、ES mapping + analyzer 最优配置
