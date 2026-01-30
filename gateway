@@ -1,0 +1,557 @@
+我准备在我的gateway里面增加下面功能，用于APP端的网络探针数据上报
+服务端校验顺序-仅仅在gateway进行校验
+1、ts 是否在 5 分钟内
+2、nonce 是否已用（LRU 缓存）
+3、HMAC 是否正确
+上面任何一步失败直接丢弃，不返回详细错误
+4、不解密 body传递给后端接收服务，接收服务解密AES，这样不阻塞gateway，防止抖动
+
+服务端需要提供得接口
+1、gateway服务提供获取token得服务，只提供给APP端，IOS和安卓得URL不一样（处理和生成逻辑一样），请求token报文必须AES加解密，app将密钥保存在沙盒等安全得地方，生产只有组长知道
+2、gateway提供要探测哪些域名，哪些DNS的接口,
+3、gateway提供探针上报接口，IOS和安卓的URL不一样，进行数据校验,
+4、uploadlog服务提供探针上报接收接口IOS,安卓处理不一样，进行AES解密并发送kafka
+
+token的TTL是30分钟，同一个token5分钟内最多请求100次，token分布式的存放在redis里面
+
+HMAC input 一定要包含 ts + nonce + body_hash  ;
+出错Gateway 直接返回 204 / 444  ，不返回具体错误原因
+gateway提供的两个接口做开关，有问题可以关闭，直接返回410状态，APP端需要对服务端返回非200状态做兼容
+token获取接口，探测哪些域名，哪些DNS的接口，gateway提供探针上报接口，做防刷，每个IP每3分钟最多100次，次数可以配置，参考下面代码
+
+@Component
+public class IpRateLimitService {
+
+    private static final String LUA_SCRIPT =
+            "local key = KEYS[1] " +
+            "local limit = tonumber(ARGV[1]) " +
+            "local window = tonumber(ARGV[2]) " +
+            "local current = redis.call('INCR', key) " +
+            "if current == 1 then redis.call('EXPIRE', key, window) end " +
+            "if current > limit then return 0 end " +
+            "return 1";
+
+    private final RedisTemplate<String, String> redisTemplate;
+    private final DefaultRedisScript<Long> script;
+
+    public IpRateLimitService(RedisTemplate<String, String> redisTemplate) {
+        this.redisTemplate = redisTemplate;
+        this.script = new DefaultRedisScript<>();
+        this.script.setScriptText(LUA_SCRIPT);
+        this.script.setResultType(Long.class);
+    }
+
+    public boolean allow(String ip) {
+        String key = "ip:token:limit:" + ip;
+
+        Long result = redisTemplate.execute(
+                script,
+                Collections.singletonList(key),
+                "100",      // limit
+                "180"     // 3分钟
+        );
+
+        return result != null && result == 1;
+    }
+}
+
+@Component
+public class TokenIpLimitFilter implements GlobalFilter, Ordered {
+
+    private final IpRateLimitService rateLimitService;
+
+    public TokenIpLimitFilter(IpRateLimitService rateLimitService) {
+        this.rateLimitService = rateLimitService;
+    }
+
+    @Override
+    public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+
+        String path = exchange.getRequest().getURI().getPath();
+
+        // 只拦 token 获取接口
+        if (!path.startsWith("/api/token/get")) {
+            return chain.filter(exchange);
+        }
+
+        String ip = getClientIp(exchange);
+
+        if (!rateLimitService.allow(ip)) {
+            exchange.getResponse().setStatusCode(HttpStatus.NO_CONTENT); // 204 / 444
+            return exchange.getResponse().setComplete();
+        }
+
+        return chain.filter(exchange);
+    }
+
+    @Override
+    public int getOrder() {
+        return -100; // 比鉴权更早
+    }
+
+    private String getClientIp(ServerWebExchange exchange) {
+        HttpHeaders headers = exchange.getRequest().getHeaders();
+        String ip = headers.getFirst("X-Forwarded-For");
+        if (ip != null) {
+            return ip.split(",")[0].trim();
+        }
+        return exchange.getRequest().getRemoteAddress().getAddress().getHostAddress();
+    }
+}
+
+  
+我的gateway项目依赖spring-cloud-starter-gateway，下面是我项目现在有的三个java文件
+
+
+package com.sports.gateway.filters;
+
+import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.util.StrUtil;
+import com.alibaba.fastjson.JSON;
+import com.sports.common.auth.constants.SecurityConstants;
+import com.sports.common.auth.constants.TokenConstants;
+import com.sports.common.auth.dto.UserContext;
+
+import com.sports.common.cache.distribute.DistributedCacheService;
+import com.sports.common.exception.AuthException;
+import com.sports.common.exception.ErrorCode;
+import com.sports.gateway.config.properties.IgnoreWhiteProperties;
+import com.sports.gateway.config.properties.RateLimitProperties;
+import com.sports.gateway.config.properties.TipTokenProperties;
+import com.sports.gateway.utils.WebUtils;
+import lombok.SneakyThrows;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.collections.CollectionUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cloud.context.config.annotation.RefreshScope;
+import org.springframework.cloud.gateway.filter.GatewayFilterChain;
+import org.springframework.cloud.gateway.filter.GlobalFilter;
+import org.springframework.core.annotation.Order;
+
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
+import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Mono;
+
+import javax.annotation.Resource;
+import java.net.URLEncoder;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import static com.sports.common.constants.SportsConstants.REDIS_TOKEN_SESSION;
+
+/**
+ * 鉴权过滤器
+ *
+ * @Author Lanwin
+ * 7-29改动 因为setnel filter执行的优先级永远大于这个 所以在执行过滤器的时候手动调用鉴权
+ */
+@Order(-1)
+@Component
+@RefreshScope
+@Slf4j
+@SuppressWarnings("unchecked")
+public class AuthFilter  {
+
+    // 排除过滤的 uri 地址
+    @Autowired
+    private IgnoreWhiteProperties ignoreWhite;
+
+    @Autowired
+    private RateLimitProperties rateLimit;
+
+    @Autowired
+    private DistributedCacheService redisCacheService;
+    @Resource
+    private RedisTemplate<String, Object> redisTemplate;
+//    @Resource
+//    private LocaleMessageSourceUtils localeMessageSourceUtils;
+
+    @Resource
+    private TipTokenProperties tipNoToken;
+
+    @SneakyThrows
+    public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+        // 注意：通过ServletUtils.getRequest()获取到的HttpServletRequest是空的
+        ServerHttpRequest request = exchange.getRequest();
+        // 1、获取当前的请求连接
+        String path = request.getURI().getPath();
+        String requestIp = getIpAddr(request);
+        log.info("请求IP={},请求路径={}", requestIp, path);
+        if (StringUtils.isEmpty(requestIp) || requestIp.equals("127.0.0.1")) {
+            log.error("客户端IP为空，IP={}，请检查Nginx反向代理是否有把IP转发过来...", requestIp);
+        }
+
+        // 2、禁止访问路径
+        if (CollUtil.isNotEmpty(ignoreWhite.getBlacksPrefix())) {
+            if (ignoreWhite.getBlacksPrefix().stream().anyMatch(path::startsWith)) {
+                log.error("非法请求路径={},{}", requestIp, path);
+                String msg = ErrorCode.FORBID_REQUEST.getMessage();
+//                try {
+//                    msg = localeMessageSourceUtils.getMessage(ErrorCode.FORBID_REQUEST.getCode().toString());
+//                } catch (Exception ex) {
+//                    log.error("AuthFilter异常code没配置国际化code:{}", ErrorCode.FORBID_REQUEST.getCode());
+//                    msg = ErrorCode.FORBID_REQUEST.getMessage();
+//                }
+                return unauthorizedResponse(exchange, msg, ErrorCode.FORBID_REQUEST.getCode());
+            }
+        }
+        String switchStatus = rateLimit.getSwitchStatus();
+        List<String> limitList = rateLimit.getLimit();
+        if (switchStatus.equalsIgnoreCase("true") && CollectionUtils.isNotEmpty(limitList) && upToFlowThreshold(limitList, path)) {
+            String msg = ErrorCode.ACTION_DO_REPEAT.getMessage();
+            return unauthorizedResponse(exchange, msg, ErrorCode.ACTION_DO_REPEAT.getCode());
+        }
+        // 3、获取请求头参数token
+        String token = getToken(request);
+        // 4、判断，此请求地址是否需要进行token校验，如果不需要，直接放行，进入微服务
+        if (CollUtil.isNotEmpty(ignoreWhite.getWhitesPrefix())) {
+            // 跳过不需要验证的路径前缀匹配
+            if (ignoreWhite.getWhitesPrefix().stream().anyMatch(path::startsWith)) {
+                log.info("白名单前缀API-1={},{}", ignoreWhite.getWhitesPrefix(), path);
+                return chain.filter(exchange);
+            }
+        }
+        if (CollUtil.isNotEmpty(ignoreWhite.getWhites())) {
+            // 开放游客访问-不带token  如果带token就不是游客 ，需要解析token
+            if (ignoreWhite.getWhites().contains(path) && StrUtil.isBlank(token)) {
+                log.info("白名单前缀API-2={},{},{}", ignoreWhite.getWhites(), path, token);
+                return chain.filter(exchange);
+            }
+        }
+        try {
+            if (StrUtil.contains(exchange.getRequest().getPath().toString(), "v2")) {
+                log.info("filter请求API-3：{},{},{}", ignoreWhite.getWhites(), exchange.getRequest().getPath(), token);
+                // 文档地址一律放开
+                return chain.filter(exchange);
+            }
+            if (StrUtil.isBlank(token)) {
+                log.info("filter请求API-4：{},{},{}", ignoreWhite.getWhites(), exchange.getRequest().getPath(), token);
+                if (tipNoToken.getLoginFrist().contains(path)){
+                    return unauthorizedResponse(exchange, "请先登录");
+                }
+                return unauthorizedResponse(exchange, "令牌不能为空");
+            }
+            String tokenkey = REDIS_TOKEN_SESSION + token;
+            UserContext userContext = redisCacheService.getObject2(tokenkey, UserContext.class);
+            if (userContext == null) {
+                log.error("!!!用户token,userContext:" + userContext + ",path=" + path + ",tokenkey=" + tokenkey);
+                throw new AuthException(ErrorCode.LOGIN_TOKEN_INVALID);
+            }
+/*            Claims claims = AuthJJwtUtils.parseLoginToken(token);
+            if (claims == null) {
+                log.info("filter请求API-5：{},{},{}", ignoreWhite.getWhites(), exchange.getRequest().getPath(), token);
+                return unauthorizedResponse(exchange, "令牌已过期或验证不正确！");
+            }*/
+            //String userId = AuthJJwtUtils.getUserId(claims);
+            //String username = AuthJJwtUtils.getUserName(claims);
+            Long userId = userContext.getUid();
+            String username = userContext.getUserName();
+            if (userId == null || StrUtil.isBlank(username)) {
+                log.info("filter请求API-6：{},{},{}", ignoreWhite.getWhites(), exchange.getRequest().getPath(), token);
+
+                String msg = "令牌验证失败";
+//                try {
+//                    msg = localeMessageSourceUtils.getMessage(ErrorCode.TOKEN_VERIFICATION_FAILED.getCode().toString());
+//                } catch (Exception ex) {
+//                    log.error("AuthFilter异常code没配置国际化code:{}", ErrorCode.TOKEN_VERIFICATION_FAILED.getCode());
+//                    msg = "令牌验证失败";
+//                }
+                return unauthorizedResponse(exchange, msg);
+            }
+            // 构建用户信息,设置本次请求的IP地址
+/*
+            UserContext userContext = new UserContext();
+            userContext.setRequestIp(requestIp);
+            userContext.setUid(Convert.toLong(userId));
+            userContext.setUserName(username);
+            userContext.setUserKey(AuthJJwtUtils.getUserKey(claims));// userKey 用户唯一的UUID key【member_login_tokens:userKey】，用来访问redis获取会员基本信息
+            userContext.setTenantId(Convert.toLong(AuthJJwtUtils.getTenantId(claims)));// tenantId 平台租户ID
+*/
+
+            // 设置一个新的请求头参数（解析后的明文数据） 设置用户信息到请求
+            ServerHttpRequest.Builder mutate = request.mutate();
+            HttpHeaders headers = request.getHeaders();
+            List<String> sw8Headers = headers.get("sw8");
+            if (sw8Headers != null) {
+                mutate.headers(h -> h.put("sw8", sw8Headers));
+            }
+            addHeader(mutate, SecurityConstants.USER_CONTEXT, JSON.toJSONString(userContext));
+            mutate.header("userId", String.valueOf(userId));
+
+            // 将此请求对象，写入到微服务转发的上下文中
+            return chain.filter(exchange.mutate().request(mutate.build()).build());
+        } catch (AuthException e) {
+            log.error("AuthFilter中发生认证异常：{}", e);
+            if (e.getCode().equals(ErrorCode.LOGIN_TOKEN_INVALID.getCode())) {
+                if (CollUtil.isNotEmpty(ignoreWhite.getWhites())) {
+                    // 跳过不需要验证的路径
+                    if (ignoreWhite.getWhites().contains(path)) {
+                        return chain.filter(exchange);
+                    }
+                }
+                if (CollUtil.isNotEmpty(ignoreWhite.getWhitesPrefix())) {
+                    // 跳过不需要验证的路径前缀匹配
+                    if (ignoreWhite.getWhitesPrefix().stream().filter(t -> path.startsWith(t)).findAny().isPresent()) {
+                        return chain.filter(exchange);
+                    }
+                }
+            }
+            String msg = e.getMessage();
+//            try {
+//                msg = localeMessageSourceUtils.getMessage(e.getCode().toString());
+//            } catch (Exception ex) {
+//                log.error("AuthFilter异常code没配置国际化code:{}", e.getCode());
+//                msg = e.getMessage();
+//            }
+            return unauthorizedResponse(exchange, msg, e.getCode());
+        } catch (Exception e) {
+            log.error("AuthFilter中发生异常:", e);
+            String msg = ErrorCode.SERVER_EXCEPTION.getMessage();
+//            try {
+//                msg = localeMessageSourceUtils.getMessage(ErrorCode.SERVER_EXCEPTION.getCode().toString());
+//            } catch (Exception ex) {
+//                log.error("AuthFilter异常code没配置国际化code:{}", ErrorCode.SERVER_EXCEPTION.getCode());
+//                msg = ErrorCode.SERVER_EXCEPTION.getMessage();
+//            }
+            return unauthorizedResponse(exchange, msg, ErrorCode.SERVER_EXCEPTION.getCode());
+        }
+    }
+
+    private boolean upToFlowThreshold(List<String> limitList, String path) {
+        try {
+            if (path.startsWith("/")) {
+                path = path.substring(1, path.length());
+            }
+            Map<String, String> limitMap = new HashMap<>();
+            for (String limitStr : limitList) {
+                String[] limitArray = limitStr.split(",");
+                limitMap.put(limitArray[0], limitArray[1]);
+            }
+            if (limitMap.containsKey(path)) {
+
+                String limitStr = limitMap.get(path);
+
+                String[] limitArr = limitStr.split("/");
+
+                int expire = Integer.parseInt(limitArr[1]);
+                int limit = Integer.parseInt(limitArr[0]);
+
+
+                List<String> keys = new ArrayList<>();
+                keys.add(path);
+                String luaScript = buildLuaScript();
+                RedisScript<Long> redisScript = new DefaultRedisScript<>(luaScript, Long.class);
+                Long count = redisTemplate.execute(redisScript, keys, limit, expire);
+                if (count != null && count.intValue() > limit) {
+                    log.info(path + ",达到流量控制阈值:" + limit + ",当前访问次数:" + count + ",limitStr=" + limitStr);
+                    return true;
+                } else
+                    return false;
+            } else {
+                return false;
+            }
+        } catch (Exception e) {
+            log.error("upToFlowThreshold:" + limitList + path, e);
+            return false;
+        }
+
+
+    }
+
+    /**
+     * 构建redis lua脚本
+     *
+     * @return
+     */
+    private String buildLuaScript() {
+        StringBuilder luaString = new StringBuilder();
+        luaString.append("local key = KEYS[1]");
+        //获取ARGV内参数Limit
+        luaString.append("\nlocal count = tonumber(ARGV[1])");
+        //获取key的次数
+        luaString.append("\nlocal time = tonumber(ARGV[2])");
+        luaString.append("\nlocal current = redis.call('get', key)");
+        luaString.append("\nif current and tonumber(current) > count then");
+        luaString.append("\ncurrent = redis.call('incr', key)");
+        luaString.append("\nreturn tonumber(current)");
+        //自增长 1
+        luaString.append("\nend");
+        //设置过期时间
+        luaString.append("\ncurrent = redis.call('incr', key)");
+        luaString.append("\nif tonumber(current) == 1 then");
+        luaString.append("\nredis.call('expire', key, time)");
+        luaString.append("\nend");
+        luaString.append("\nreturn tonumber(current)");
+        return luaString.toString();
+    }
+
+    @SneakyThrows
+    private void addHeader(ServerHttpRequest.Builder mutate, String name, Object value) {
+        if (value == null) {
+            return;
+        }
+        String valueStr = value.toString();
+        String valueEncode = URLEncoder.encode(valueStr, SecurityConstants.UTF_8);
+        mutate.header(name, valueEncode);
+    }
+
+    private void removeHeader(ServerHttpRequest.Builder mutate, String name) {
+        mutate.headers(httpHeaders -> httpHeaders.remove(name)).build();
+    }
+
+    private Mono<Void> unauthorizedResponse(ServerWebExchange exchange, String msg) {
+        log.error("[鉴权异常处理]请求路径:{} - {}", exchange.getRequest().getPath(), msg);
+        return WebUtils.webFluxResponseWriter(exchange.getResponse(), msg, HttpStatus.UNAUTHORIZED.value());
+    }
+
+    private Mono<Void> unauthorizedResponse(ServerWebExchange exchange, String msg, int code) {
+        return WebUtils.webFluxResponseWriter(exchange.getResponse(), msg, code);
+    }
+
+    /**
+     * 获取请求token
+     */
+    private String getToken(ServerHttpRequest request) {
+        String token = request.getHeaders().getFirst(TokenConstants.AUTHENTICATION);
+        // 如果前端设置了令牌前缀，则裁剪掉前缀
+        if (StrUtil.isNotBlank(token) && token.startsWith(TokenConstants.PREFIX)) {
+            token = token.replaceFirst(TokenConstants.PREFIX, "");
+        }
+        return token;
+    }
+
+    /**
+     * 修复IP获取方式，request.getRemoteAddress() 和 ServletUtils.getClientIP() 获取到的IP都是127.0.0.1
+     * 通过ServletUtils.getRequest()获取到的HttpServletRequest是空的
+     *
+     * @param request
+     * @return
+     */
+    private String getIpAddr(ServerHttpRequest request) {
+        String ip = null;
+        try {
+            HttpHeaders httpHeaders = request.getHeaders();
+            log.debug("请求头httpHeaders={}", httpHeaders.entrySet());
+            ip = httpHeaders.getFirst("x-real-ip");
+            if (StringUtils.isEmpty(ip) || "unknown".equalsIgnoreCase(ip)) {
+                ip = httpHeaders.getFirst("x-forwarded-for");
+            }
+            // 如果多个，则获取第一个IP地址
+            if (!StringUtils.isEmpty(ip) && ip.length() > 15) {
+                if (ip.indexOf(",") > 0) {
+                    ip = ip.substring(0, ip.indexOf(",")).replaceAll(" ", "");
+                }
+            }
+        } catch (Exception e) {
+            log.error("getIpAddr ERROR ", e);
+        }
+        return ip;
+    }
+
+}
+
+
+package com.sports.gateway.utils;
+
+import com.alibaba.fastjson.JSONObject;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.server.reactive.ServerHttpResponse;
+import reactor.core.publisher.Mono;
+
+/**
+ * 客户端工具类
+ * @author Lanwin
+ */
+public class WebUtils {
+
+    /**
+     * 设置webflux模型响应
+     *
+     * @param response ServerHttpResponse
+     * @param code 响应状态码
+     * @param value 响应内容
+     * @return Mono<Void>
+     */
+    public static Mono<Void> webFluxResponseWriter(ServerHttpResponse response, Object value, int code)
+    {
+        return webFluxResponseWriter(response, HttpStatus.OK, value, code);
+    }
+
+    /**
+     * 设置webflux模型响应
+     *
+     * @param response ServerHttpResponse
+     * @param status http状态码
+     * @param code 响应状态码
+     * @param value 响应内容
+     * @return Mono<Void>
+     */
+    public static Mono<Void> webFluxResponseWriter(ServerHttpResponse response, HttpStatus status, Object value, int code)
+    {
+        return webFluxResponseWriter(response, MediaType.APPLICATION_JSON_VALUE, status, value, code);
+    }
+
+    /**
+     * 设置webflux模型响应
+     *
+     * @param response ServerHttpResponse
+     * @param contentType content-type
+     * @param status http状态码
+     * @param code 响应状态码
+     * @param value 响应内容
+     * @return Mono<Void>
+     */
+    public static Mono<Void> webFluxResponseWriter(ServerHttpResponse response, String contentType, HttpStatus status, Object value, int code)
+    {
+        response.setStatusCode(status);
+        response.getHeaders().add(HttpHeaders.CONTENT_TYPE, contentType);
+        ObjectMapper objectMapper = new ObjectMapper();
+        JSONObject jsonObject = new JSONObject();
+        jsonObject.put("code", code);
+        jsonObject.put("msg", value.toString());
+
+        DataBuffer dataBuffer = response.bufferFactory().wrap(jsonObject.toJSONString().getBytes());
+        return response.writeWith(Mono.just(dataBuffer));
+    }
+}
+
+
+
+package com.sports.gateway.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.codec.ServerCodecConfigurer;
+import org.springframework.http.codec.json.Jackson2JsonDecoder;
+import org.springframework.http.codec.json.Jackson2JsonEncoder;
+import org.springframework.web.reactive.config.WebFluxConfigurer;
+
+@Configuration
+public class WebFluxConfig implements WebFluxConfigurer {
+
+    @Override
+    public void configureHttpMessageCodecs(ServerCodecConfigurer configurer) {
+        configurer.defaultCodecs().jackson2JsonEncoder(new Jackson2JsonEncoder());
+        configurer.defaultCodecs().jackson2JsonDecoder(new Jackson2JsonDecoder());
+    }
+
+    @Bean
+    public ServerCodecConfigurer serverCodecConfigurer() {
+        return ServerCodecConfigurer.create();
+    }
+}
+
+
