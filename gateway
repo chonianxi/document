@@ -1,3 +1,80 @@
+package com.sports.gateway.dto;
+
+
+import lombok.Data;
+
+import java.util.List;
+
+@Data
+public class PushData {
+
+    /**
+     * 哪个应用，消息中心是公共服务针对多个应用
+     */
+    private String appId;
+
+    /**
+     * 类型
+     */
+    private BizType bizType;
+    /**
+     * 用户id集合或者用户名称集合，必须是唯一标识
+     * 一批最多100个用户
+     */
+    private List<String> userIds;
+    /**
+     * 发送给用户得内容，如果有模板ID，则取该字段json为Map对象，替换模板里面的占位符；无模板ID则直接发送该内容给用户
+     *  消息体：
+     *  - 有 templateId：data 必须是 JSON 字符串（Map 结构）
+     *  - 无 templateId：data 为最终发送文本
+     */
+    private String data;
+    /**
+     * 模板ID
+     */
+    private String templateId;
+
+    /**
+     * 批次ID：同一批推送相同，也是分区键
+     * 单个用户的时候批次ID就使用用户ID
+     * 多个用户的时候，保证同一批用户在同一批里面处理
+     **/
+    private String batchId;
+
+    /**
+     * 每一条 PushData 的唯一ID，每个pushId在48小时内只会处理一次，一般是业务系统的数据库里面唯一ID
+     * 用于幂等 / 去重 / 补发
+     */
+    private String pushId;
+
+    /**
+     * 推送优先级
+     * HIGH：必须发
+     * NORMAL：可延迟
+     * LOW：可丢弃
+     */
+    private Priority priority;
+
+    public enum BizType {
+        WEBSOCKET,
+        SMS,
+        EMAIL,
+        LARK,
+        TELEGRAM,
+        WHATSAPP,
+        JIGUANG,
+        MESSAGE
+    }
+
+    public enum Priority {
+        HIGH, NORMAL, LOW
+    }
+
+
+}
+
+
+
 我准备在我的gateway里面增加下面功能，用于APP端的网络探针数据上报
 服务端校验顺序-仅仅在gateway进行校验
 1、ts 是否在 5 分钟内
