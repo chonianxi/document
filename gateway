@@ -1,3 +1,145 @@
+@startuml
+!define RECTANGLE class
+title 统一可观测治理平台总体架构
+
+actor "用户" as User
+
+package "前端展示层" {
+    rectangle "Vue3 + ElementPlus\n统一监控入口" as Frontend
+}
+
+package "统一可观测治理平台\n(控制层)" {
+    rectangle "认证与权限中心\nJWT + TOTP + RBAC" as Auth
+    rectangle "系统治理模块\n用户/部门/岗位/菜单/审计日志" as Governance
+    rectangle "AWS监控模块\nCloudWatch Adapter" as AWSAdapter
+    rectangle "SkyWalking接入模块\nTrace + 接口统计" as SkyAdapter
+    rectangle "Grafana嵌入模块\n统一展示" as Grafana
+    rectangle "告警规则引擎\n规则匹配 + 消息通知" as Alarm
+}
+
+package "数据适配层" {
+    rectangle "AWS CloudWatch API" as CloudWatch
+    rectangle "SkyWalking GraphQL API" as SkyAPI
+    rectangle "Grafana API" as GrafanaAPI
+}
+
+package "外部系统" {
+    rectangle "RDS / Redis / ES / Kafka" as AWSData
+    rectangle "SkyWalking APM系统" as SkyData
+    rectangle "Grafana Dashboard" as GrafanaData
+}
+
+User --> Frontend
+Frontend --> Auth
+Frontend --> Governance
+Frontend --> AWSAdapter
+Frontend --> SkyAdapter
+Frontend --> Grafana
+Frontend --> Alarm
+
+AWSAdapter --> CloudWatch
+CloudWatch --> AWSData
+
+SkyAdapter --> SkyAPI
+SkyAPI --> SkyData
+
+Grafana --> GrafanaAPI
+GrafanaAPI --> GrafanaData
+
+Alarm --> AWSAdapter
+Alarm --> SkyAdapter
+
+@enduml
+
+
+
+@startuml
+title 数据流与告警流程
+
+actor "用户" as User
+rectangle "统一可观测治理平台" as Platform {
+    rectangle "数据适配层\nAdapter模块" as Adapter
+    rectangle "告警规则引擎" as Alarm
+    rectangle "审计日志" as Audit
+}
+
+rectangle "外部系统" as External {
+    rectangle "AWS CloudWatch / SkyWalking / 探针" as DataSource
+}
+
+User -> Platform : 查看监控 / 配置告警
+Platform -> Adapter : 拉取监控数据
+Adapter -> DataSource : 查询指标 / Trace
+DataSource --> Adapter : 返回数据
+Adapter -> Platform : 返回统一格式数据
+Platform -> Alarm : 规则匹配
+Alarm -> User : 异常告警通知
+Platform -> Audit : 全链路操作记录
+@enduml
+
+
+@startuml
+title 多租户 RBAC 模型
+
+entity "Tenant" as T
+entity "用户 User" as U
+entity "岗位 Role" as R
+entity "菜单 Menu" as M
+
+T ||--o{ U : 拥有
+U ||--o{ R : 分配
+R ||--o{ M : 关联
+
+note right of R
+用户-岗位多对多
+岗位-菜单多对多
+权限控制方法级 @PreAuthorize
+end note
+@enduml
+
+
+
+@startuml
+title AWS监控 Adapter 模式
+
+interface MetricAdapter {
+    +query(MetricQueryParam param) : MetricResult
+}
+
+class RdsAdapter
+class RedisAdapter
+class EsAdapter
+class KafkaAdapter
+
+MetricAdapter <|.. RdsAdapter
+MetricAdapter <|.. RedisAdapter
+MetricAdapter <|.. EsAdapter
+MetricAdapter <|.. KafkaAdapter
+
+RdsAdapter --> "CloudWatch RDS API"
+RedisAdapter --> "CloudWatch Redis API"
+EsAdapter --> "CloudWatch ES API"
+KafkaAdapter --> "CloudWatch Kafka API"
+@enduml
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 package com.sports.gateway.dto;
 
 
