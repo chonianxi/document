@@ -245,6 +245,7 @@ CREATE TABLE signal (
 
 signal检查出的信号放到新表里面，表怎么设计，里面包含某个标的，某个时间，某个周期，是否在MACD0轴以上，上升趋势中红柱子连续面积和上一个绿柱子连续面积相比，下降趋势中绿柱子连续面积和上一个红柱子连续面积相比等指标
 
+趋势给方向，MACD 给动力，结构给确认，布林给时机
 boll_width = upper - lower
 boll_width_pct = (upper - lower) / mid
 | 状态   | 条件                   |
@@ -253,6 +254,26 @@ boll_width_pct = (upper - lower) / mid
 | 收缩   | boll_width_pct ≤ P20 |
 | 极限收缩 | boll_width_pct ≤ P10 |
 boll_width_pct 连续 N 根下降
+防止假突破
+✅ 「收缩 + 动能 + 趋势 + 结构确认」= 真突破概率大幅提升
+
+只做「趋势内收缩」
+✅ 只做
+上升趋势中的回踩收缩
+下降趋势中的反弹收缩
+
+真突破前的 MACD 特征
+多头
+MACD > 0
+AND curr_red_area > prev_green_area * 1.2
+AND DIF 上行
+
+空头
+MACD < 0
+AND curr_green_area > prev_red_area * 1.2
+AND DIF 下行
+
+
 
 
 
