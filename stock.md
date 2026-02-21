@@ -1,3 +1,133 @@
+二买
+在一个明确的上升趋势中，价格完成过一次上涨后出现回调。
+该回调没有破坏趋势结构（未跌破关键均线或前低），
+同时回调阶段的下跌动能明显弱于上一段上涨动能。
+
+当回调结束、下跌动能衰竭，并出现新的上涨动能（如 MACD 由负转正或 DIF 上穿 DEA）时，
+认为趋势继续的概率较高，该位置称为「二次买入点（Second Buy）」。
+
+关键特征：
+
+趋势方向仍然向上
+
+回调是“弱回调”，而非趋势反转
+
+动能由弱转强发生在趋势内部
+Rule Name: SECOND_BUY
+
+Context:
+- Market: CN or CRYPTO
+- Timeframe: 30m / 1d
+
+Preconditions (Trend):
+1. trend_flag == 1
+2. close_price > MA20
+3. MA20 is rising
+
+Pullback Conditions (Weak Correction):
+4. previous_red_macd_area > 0
+5. current_green_macd_area > 0
+6. current_green_macd_area < previous_red_macd_area * 0.5
+
+Structure Protection:
+7. lowest_price_during_pullback > MA20
+   OR
+   lowest_price_during_pullback > previous_swing_low
+
+Trigger Conditions (Re-Acceleration):
+8. MACD_histogram crosses from negative to positive
+   OR
+   DIF crosses above DEA
+
+Decision:
+IF all above conditions are satisfied
+THEN
+    signal_type = "SECOND_BUY"
+    signal_confidence = "HIGH"
+
+Explanation:
+- Second Buy occurs inside an existing uptrend.
+- The pullback must show weakening downside momentum.
+- The trend structure must remain intact.
+- The signal is triggered by the first sign of renewed upside momentum.
+- This signal favors trend continuation rather than bottom picking.
+
+
+防止假二买
+Invalid Conditions (False Second Buy):
+- trend_flag != 1
+- current_green_macd_area >= previous_red_macd_area
+- price breaks below MA20
+- signal occurs inside a sideways or range-bound market
+
+一买
+Rule Name: FIRST_BUY
+
+Context:
+- Market: CN or CRYPTO
+- Timeframe: 5m / 30m
+
+Downtrend Preconditions:
+1. trend_flag == -1
+2. close_price < MA20
+3. MA20 is falling
+
+Exhaustion Conditions (Momentum Weakening):
+4. previous_green_macd_area > 0
+5. current_green_macd_area > 0
+6. current_green_macd_area < previous_green_macd_area
+   (downside momentum decreasing)
+
+Optional Strong Condition:
+7. Price makes lower low
+   AND
+   MACD histogram does NOT make new low
+   (bullish divergence)
+
+Structure Stabilization:
+8. Current low >= previous low
+   OR
+   Price forms a higher low on smaller timeframe
+
+Trigger Condition:
+9. MACD histogram crosses from negative to positive
+   OR
+   DIF crosses above DEA
+
+Decision:
+IF conditions (1-6) AND (8) AND (9)
+THEN
+    signal_type = "FIRST_BUY"
+    signal_confidence = "MEDIUM"
+
+更准确的一买增加这个指标
+IF
+    FIRST_BUY conditions
+AND boll_squeeze_level >= 1
+THEN
+    signal_confidence += 10
+
+    
+
+Explanation:
+- First Buy happens inside a downtrend.
+- It identifies momentum exhaustion rather than confirmed reversal.
+- The signal is weaker than Second Buy.
+- Risk is higher because trend reversal is not yet confirmed.
+- Suitable for early entry with strict stop-loss.
+
+二买和一买的区别
+| 维度   | 一买   | 二买   |
+| ---- | ---- | ---- |
+| 所处趋势 | 下跌中  | 上升中  |
+| 性质   | 抄底尝试 | 顺势跟进 |
+| 成功率  | 中等偏低 | 高    |
+| 风险   | 高    | 低    |
+| 回撤   | 大    | 小    |
+
+
+
+
 我想做一个交易系统
 分两个层，一个数据源层，一个策略层
 数据源层
