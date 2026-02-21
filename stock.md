@@ -190,6 +190,72 @@ CREATE INDEX idx_kline_trend ON kline(market, interval, trend_flag);
 COMMENT ON TABLE kline IS '多周期K线派生表（含MACD/BOLL指标与面积，用于规则计算）';
 
 
+CREATE TABLE signal (
+    id BIGSERIAL PRIMARY KEY,
+
+    -- ========== 基础定位 ==========
+    market      VARCHAR(10)  NOT NULL COMMENT '市场：CN / CRYPTO',
+    symbol      VARCHAR(20)  NOT NULL COMMENT '标的代码 / 交易对',
+    interval    VARCHAR(10)  NOT NULL COMMENT '周期：5m / 30m / 240m',
+    ts          TIMESTAMP    NOT NULL COMMENT '信号对应K线时间（K线开始时间）',
+
+    -- ========== MACD 状态 ==========
+    macd_above_zero   BOOLEAN COMMENT 'MACD 是否在 0 轴上方',
+    macd_dif          DECIMAL(18,8) COMMENT 'DIF 当前值',
+    macd_dea          DECIMAL(18,8) COMMENT 'DEA 当前值',
+    macd_hist         DECIMAL(18,8) COMMENT '当前柱子值',
+    macd_color        SMALLINT COMMENT '柱子颜色：1红 -1绿',
+
+    -- ========== MACD 连续面积统计 ==========
+    curr_red_area     DECIMAL(20,8) COMMENT '当前连续红柱累计面积',
+    prev_green_area   DECIMAL(20,8) COMMENT '上一段连续绿柱累计面积',
+    curr_green_area   DECIMAL(20,8) COMMENT '当前连续绿柱累计面积',
+    prev_red_area     DECIMAL(20,8) COMMENT '上一段连续红柱累计面积',
+
+    red_green_area_ratio DECIMAL(10,4) COMMENT '红/绿面积比（强弱指标）',
+
+    -- ========== 趋势判断 ==========
+    trend_flag        SMALLINT COMMENT '趋势：1上升 -1下降 0震荡',
+    in_trend          BOOLEAN COMMENT '是否在趋势中产生信号',
+    ma20              DECIMAL(18,6) COMMENT 'MA20',
+    ma_trend_up       BOOLEAN COMMENT 'MA 是否向上',
+
+    -- ========== 信号结果 ==========
+    signal_flag       BOOLEAN NOT NULL COMMENT '是否触发信号',
+    signal_type       VARCHAR(20) COMMENT '信号类型：BUY / SELL / WATCH',
+    signal_score      DECIMAL(6,2) COMMENT '信号强度评分（用于排序）',
+
+    -- ========== 规则 & 追溯 ==========
+    rule_code         VARCHAR(50) COMMENT '规则编号',
+    rule_version      VARCHAR(20) COMMENT '规则版本',
+    calc_time         TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '计算时间',
+
+    -- ========== BOLL 收缩（盘变前夕判断） ==========
+    boll_width_pct        DECIMAL(10,6) COMMENT '布林带相对宽度 (upper-lower)/mid',
+    boll_squeeze_flag     BOOLEAN COMMENT '是否处于布林收缩区（P20以内）',
+    boll_extreme_flag     BOOLEAN COMMENT '是否极限收缩（P10以内）',
+    boll_squeeze_level    SMALLINT COMMENT '收缩等级：0正常 1收缩 2极限收缩',
+    boll_width_down_cnt   INT COMMENT '布林宽度连续下降K线数量',
+    boll_in_trend         BOOLEAN COMMENT '是否趋势内收缩（高质量盘变）',
+
+
+    -- ========== 唯一性 & 索引 ==========
+    UNIQUE (market, symbol, interval, ts, rule_code)
+);
+
+signal检查出的信号放到新表里面，表怎么设计，里面包含某个标的，某个时间，某个周期，是否在MACD0轴以上，上升趋势中红柱子连续面积和上一个绿柱子连续面积相比，下降趋势中绿柱子连续面积和上一个红柱子连续面积相比等指标
+
+boll_width = upper - lower
+boll_width_pct = (upper - lower) / mid
+| 状态   | 条件                   |
+| ---- | -------------------- |
+| 正常   | boll_width_pct > P50 |
+| 收缩   | boll_width_pct ≤ P20 |
+| 极限收缩 | boll_width_pct ≤ P10 |
+boll_width_pct 连续 N 根下降
+
+
+
 datasource_base 定义抽象K线数据基类
 a_stock_baostock 定义A股的K线数据源实现
 crypto_ccxt 定义加密货币K线数据源的实现
