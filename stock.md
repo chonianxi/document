@@ -1,3 +1,82 @@
+Multi-Timeframe Buy Signal Definition:
+A valid buy signal occurs when:
+On the daily timeframe, the market is in a confirmed uptrend and has completed a Second Buy (pullback without breaking the trend).
+Simultaneously, on the 30-minute timeframe, the market experiences a short-term pullback with weakening downside momentum, forming a First Buy pattern.
+This combination indicates a high-probability continuation entry within an established upward trend.
+
+Daily Second Buy Conditions:
+
+1. daily_trend == UP
+2. daily_close > daily_MA20
+3. MACD_histogram > 0
+4. Pullback exists:
+   - recent_pullback_low > previous_swing_low
+5. MACD pullback does NOT cross below zero axis
+
+Result:
+daily_permission = TRUE
+
+
+30m First Buy Conditions:
+1. short_term_trend == DOWN or PULLBACK
+2. price < MA20_30m
+3. MACD_histogram < 0
+
+Downside Exhaustion:
+4. current_green_macd_area < previous_green_macd_area
+
+Structure Stabilization:
+5. current_low >= previous_low
+
+Trigger:
+6. MACD_histogram crosses upward
+   OR DIF crosses above DEA
+
+Result:
+entry_signal = TRUE
+
+
+Rule Name: DAILY_SECOND_BUY_AND_30M_FIRST_BUY
+
+IF
+    daily_permission == TRUE
+AND
+    thirty_min_entry_signal == TRUE
+THEN
+    signal_type = "STRONG_BUY"
+    signal_reason = "Daily Second Buy + 30m First Buy"
+    confidence = HIGH
+    recommended_position = 0.5 ~ 0.7
+    
+Explanation:
+- Daily Second Buy defines market regime: bullish continuation.
+- 30-minute First Buy defines timing: pullback exhaustion.
+- Daily timeframe controls direction.
+- 30-minute timeframe controls entry precision.
+- If daily trend is not bullish, 30-minute First Buy is ignored.
+- 
+
+设计上面
+MarketState:
+- BEAR
+- TRANSITION
+- BULL
+
+Only allow:
+IF MarketState == BULL
+    THEN allow 30m First Buy
+
+信号表
+signal_type        = STRONG_BUY
+daily_signal       = SECOND_BUY
+lower_tf_signal    = FIRST_BUY
+daily_tf           = 1d
+entry_tf           = 30m
+confidence_score   = 85
+
+
+
+
 二买
 在一个明确的上升趋势中，价格完成过一次上涨后出现回调。
 该回调没有破坏趋势结构（未跌破关键均线或前低），
