@@ -1,0 +1,219 @@
+1. 环境管理
+1.1 列表（点击单条进去能看详情），列表有编辑和禁用按钮
+1.2 新增
+2. 接口管理
+3. 流程编排
+4. 流程节点
+5. 执行任务
+6. 执行结果
+7. 巡检配置
+8. 告警记录
+
+
+-- =========================================
+-- 环境配置表
+-- =========================================
+CREATE TABLE `env_config` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `env_code` VARCHAR(32) NOT NULL COMMENT '环境编码(dev/test/pre/prod)',
+    `env_name` VARCHAR(64) NOT NULL COMMENT '环境名称',
+    `base_url` VARCHAR(255) NOT NULL COMMENT '基础请求地址',
+    `headers_json` TEXT COMMENT '默认请求头(JSON格式)',
+    `enabled` TINYINT DEFAULT 1 COMMENT '是否启用:1启用 0禁用',
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_env_code` (`env_code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='环境配置表';
+
+
+-- =========================================
+-- 接口定义表
+-- =========================================
+CREATE TABLE `api_definition` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `api_name` VARCHAR(128) NOT NULL COMMENT '接口名称',
+    `api_code` VARCHAR(64) NOT NULL COMMENT '接口编码',
+    `method` VARCHAR(16) NOT NULL COMMENT '请求方法(GET/POST/PUT/DELETE)',
+    `path` VARCHAR(255) NOT NULL COMMENT '接口路径',
+    `headers_json` TEXT COMMENT '请求头模板(JSON)',
+    `body_template` LONGTEXT COMMENT '请求体模板',
+    `timeout_ms` INT DEFAULT 5000 COMMENT '超时时间(毫秒)',
+    `enabled` TINYINT DEFAULT 1 COMMENT '是否启用',
+    `create_by` VARCHAR(64) DEFAULT NULL COMMENT '创建人',
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_api_code` (`api_code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='接口定义表';
+
+
+-- =========================================
+-- 接口断言表
+-- =========================================
+CREATE TABLE `api_assertion` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `api_id` BIGINT NOT NULL COMMENT '接口ID',
+    `assert_type` VARCHAR(32) NOT NULL COMMENT '断言类型(status/json/path/body等)',
+    `expression` VARCHAR(512) NOT NULL COMMENT '断言表达式',
+    `expected_value` VARCHAR(512) DEFAULT NULL COMMENT '期望值',
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_api_id` (`api_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='接口断言表';
+
+
+-- =========================================
+-- 接口变量提取表
+-- =========================================
+CREATE TABLE `api_extract` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `api_id` BIGINT NOT NULL COMMENT '接口ID',
+    `variable_name` VARCHAR(64) NOT NULL COMMENT '变量名称',
+    `extract_type` VARCHAR(32) NOT NULL COMMENT '提取类型(jsonpath/regex/header等)',
+    `expression` VARCHAR(512) NOT NULL COMMENT '提取表达式',
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_api_id` (`api_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='接口变量提取表';
+
+
+-- =========================================
+-- 流程定义表
+-- =========================================
+CREATE TABLE `flow_definition` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `flow_name` VARCHAR(128) NOT NULL COMMENT '流程名称',
+    `flow_code` VARCHAR(64) NOT NULL COMMENT '流程编码',
+    `flow_type` VARCHAR(32) DEFAULT 'api_test' COMMENT '流程类型(api_test/patrol/stress)',
+    `description` VARCHAR(512) DEFAULT NULL COMMENT '流程描述',
+    `dsl_json` LONGTEXT COMMENT '流程DSL定义(JSON)',
+    `enabled` TINYINT DEFAULT 1 COMMENT '是否启用',
+    `create_by` VARCHAR(64) DEFAULT NULL COMMENT '创建人',
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_flow_code` (`flow_code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='流程定义表';
+
+
+-- =========================================
+-- 流程节点表
+-- =========================================
+CREATE TABLE `flow_node` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `flow_id` BIGINT NOT NULL COMMENT '流程ID',
+    `node_code` VARCHAR(64) NOT NULL COMMENT '节点编码',
+    `node_name` VARCHAR(128) NOT NULL COMMENT '节点名称',
+    `node_type` VARCHAR(32) NOT NULL COMMENT '节点类型(http/condition/script/start/end)',
+    `api_id` BIGINT DEFAULT NULL COMMENT '关联接口ID',
+    `config_json` TEXT COMMENT '节点配置(JSON)',
+    `sort_order` INT DEFAULT 0 COMMENT '排序号',
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_flow_id` (`flow_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='流程节点表';
+
+
+-- =========================================
+-- 流程连线表
+-- =========================================
+CREATE TABLE `flow_edge` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `flow_id` BIGINT NOT NULL COMMENT '流程ID',
+    `source_node_code` VARCHAR(64) NOT NULL COMMENT '源节点编码',
+    `target_node_code` VARCHAR(64) NOT NULL COMMENT '目标节点编码',
+    `condition_expression` VARCHAR(512) DEFAULT NULL COMMENT '条件表达式',
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_flow_id` (`flow_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='流程连线表';
+
+
+-- =========================================
+-- 执行任务表
+-- =========================================
+CREATE TABLE `execute_task` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `task_no` VARCHAR(64) NOT NULL COMMENT '任务编号',
+    `flow_id` BIGINT NOT NULL COMMENT '流程ID',
+    `env_code` VARCHAR(32) NOT NULL COMMENT '执行环境',
+    `execute_mode` VARCHAR(32) NOT NULL COMMENT '执行模式(test/stress/patrol)',
+    `status` VARCHAR(32) NOT NULL COMMENT '执行状态(running/success/fail)',
+    `trigger_type` VARCHAR(32) DEFAULT NULL COMMENT '触发方式(manual/cron/jenkins)',
+    `start_time` DATETIME DEFAULT NULL COMMENT '开始时间',
+    `end_time` DATETIME DEFAULT NULL COMMENT '结束时间',
+    `duration_ms` BIGINT DEFAULT NULL COMMENT '耗时(毫秒)',
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_task_no` (`task_no`),
+    KEY `idx_flow_id` (`flow_id`),
+    KEY `idx_status` (`status`),
+    KEY `idx_create_time` (`create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='执行任务表';
+
+
+-- =========================================
+-- 执行结果表
+-- =========================================
+CREATE TABLE `execute_result` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `task_id` BIGINT NOT NULL COMMENT '任务ID',
+    `node_code` VARCHAR(64) NOT NULL COMMENT '节点编码',
+    `api_name` VARCHAR(128) DEFAULT NULL COMMENT '接口名称',
+    `request_data` LONGTEXT COMMENT '请求数据',
+    `response_data` LONGTEXT COMMENT '响应数据',
+    `status` VARCHAR(32) DEFAULT NULL COMMENT '执行状态',
+    `success` TINYINT DEFAULT 0 COMMENT '是否成功',
+    `rt_ms` BIGINT DEFAULT NULL COMMENT '响应时间(毫秒)',
+    `error_msg` TEXT COMMENT '错误信息',
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_task_id` (`task_id`),
+    KEY `idx_create_time` (`create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='执行结果表';
+
+
+-- =========================================
+-- 巡检配置表
+-- =========================================
+CREATE TABLE `patrol_config` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `flow_id` BIGINT NOT NULL COMMENT '流程ID',
+    `cron_expr` VARCHAR(64) NOT NULL COMMENT 'cron表达式',
+    `enabled` TINYINT DEFAULT 1 COMMENT '是否启用',
+    `max_fail_count` INT DEFAULT 5 COMMENT '最大失败次数',
+    `alarm_enabled` TINYINT DEFAULT 1 COMMENT '是否开启告警',
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_flow_id` (`flow_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='巡检配置表';
+
+
+-- =========================================
+-- 告警记录表
+-- =========================================
+CREATE TABLE `alarm_record` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `task_id` BIGINT DEFAULT NULL COMMENT '任务ID',
+    `alarm_type` VARCHAR(64) NOT NULL COMMENT '告警类型',
+    `alarm_level` VARCHAR(32) NOT NULL COMMENT '告警等级(info/warn/error)',
+    `content` TEXT COMMENT '告警内容',
+    `send_status` TINYINT DEFAULT 0 COMMENT '发送状态',
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_task_id` (`task_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='告警记录表';
+
+
+-- =========================================
+-- 压测配置表
+-- =========================================
+CREATE TABLE `stress_config` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `flow_id` BIGINT NOT NULL COMMENT '流程ID',
+    `vus` INT DEFAULT 1 COMMENT '虚拟用户数',
+    `duration_sec` INT DEFAULT 60 COMMENT '压测时长(秒)',
+    `ramp_up_sec` INT DEFAULT 10 COMMENT '预热时间(秒)',
+    `thresholds_json` TEXT COMMENT '阈值配置(JSON)',
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_flow_id` (`flow_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='压测配置表';
