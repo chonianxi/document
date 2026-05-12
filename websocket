@@ -26,7 +26,7 @@ spring:
 afterConnectionClosed连接断开事件时移除集合里面对应的Session，如果用户下面的Session集合为空则从Map里面移除该用户map.remove(userId)
 
 所有websocket的消息收到后发送到KafKa，消息体包括，发送人，发送时间，房间号，消息类型，消息内容，分区键是房间号用MurmurHash3进行hash，这样尽量分散
-然后每个websocket服务器会是kafka的消费者，并每个websocket服务器消费组不一样，当收到消息时，检查房间号里面在线会员有哪些，本地是否有该会员，本地无该房间号会员则不处理消息，
+然后每个websocket服务器会是kafka的消费者，并每个websocket服务器消费组不一样，当收到消息时，检查本地房间号里面在线会员有哪些，本地是有在线会员，本地无该房间号会员则不处理消息，
 如果有则发送消息给本地有的会员的websocket连接（前提是发送人不是自己，是自己发送的无需再发送给自己）
 
 针对每个websocket连接要进行限流，使用 Session 的 UserProperties，限制消息发送频率，可以配置，默认间隔时间不能小于900毫秒
@@ -43,3 +43,10 @@ Spring Boot 处理 WebSocket 握手时（使用 HandshakeInterceptor），可以
 用户离开房间事件，本地某房间在线用户列表移除该用户
 用户连接建立事件，本地某房间在线用户列表增加该用户
 用户断开连接事件，本地某房间在线用户列表移除该用户
+
+每个websocket建立连接三秒内必须表明身份，3秒内没有表明身份的发送消息，非法请求，然后强制断开连接；表明身份就是发送消息体商户号、用户id、sign，验证通过就好
+心跳10秒一次，3次收不到心跳断开连接
+服务端本地为每个连接维护一个 lastActiveTime（最后活跃时间戳）使用 时间轮算法（HashedWheelTimer） 或每隔 10 秒启动一个全局定时任务，统一扫描所有连接，发现 System.currentTimeMillis() - lastActiveTime > 30000 的，
+直接由服务端主动 session.close()
+为了防止惊群，客服端首次心跳必须是5-13秒中的一个随机值，不能是10秒；第二个心跳开始是10秒
+增加优雅停机处理上面事务
