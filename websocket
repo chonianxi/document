@@ -48,5 +48,5 @@ Spring Boot 处理 WebSocket 握手时（使用 HandshakeInterceptor），可以
 心跳10秒一次，3次收不到心跳断开连接
 服务端本地为每个连接维护一个 lastActiveTime（最后活跃时间戳）使用 时间轮算法（HashedWheelTimer） 或每隔 10 秒启动一个全局定时任务，统一扫描所有连接，发现 System.currentTimeMillis() - lastActiveTime > 30000 的，
 直接由服务端主动 session.close()
-为了防止惊群，客服端首次心跳必须是5-13秒中的一个随机值，不能是10秒；第二个心跳开始是10秒
+为了防止惊群，客服端首次心跳必须是5-13秒中的一个随机抖值，不能是10秒；第二个心跳开始是10秒
 增加优雅停机处理上面事务
