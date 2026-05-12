@@ -1,0 +1,35 @@
+Nginx/OpenResty + mm3)：只负责根据 IP 离散算力，保证相同 IP 收敛在同一个 Pod，同时具备平滑的伸缩容能力
+使用 spring-boot-starter-websocket
+
+server:
+  tomcat:
+    # 最大的工作线程数，处理控制逻辑
+    threads:
+      max: 200 
+    # 接受连接的队列长度
+    accept-count: 1000
+    # 最大连接数（必须调大，默认 8192）
+    max-connections: 500000 
+
+spring:
+  # 限制 WebSocket 的消息缓存大小
+  messages:
+    websocket:
+      max-binary-message-size: 8192 # 8KB
+      max-text-message-size: 8192   # 8KB
+  #开启虚拟线程
+  threads:
+    virtual:
+      enabled: true
+
+使用ConcurrentHashMap保存每个用户的websocket连接集合ConcurrentHashMap<Long, List<Session>>;List里面保存的是房间Id和该用户的连接
+afterConnectionClosed连接断开事件时移除集合里面对应的Session，如果用户下面的Session集合为空则从Map里面移除该用户map.remove(userId)
+
+所有websocket的消息收到后发送到KafKa，消息体包括，发送人，发送时间，房间号，消息类型，消息内容，分区键是房间号用MurmurHash3进行hash，这样尽量分散
+然后每个websocket服务器会是kafka的消费者，并每个websocket服务器消费组不一样，当收到消息时，检查房间号里面在线会员有哪些，本地是否有该会员，本地无该房间号会员则不处理消息，
+如果有则发送消息给本地有的会员的websocket连接（前提是发送人不是自己，是自己发送的无需再发送给自己）
+
+针对每个websocket连接要进行限流，使用 Session 的 UserProperties，限制消息发送频率，可以配置，默认间隔时间不能小于900毫秒
+Spring Boot 处理 WebSocket 握手时（使用 HandshakeInterceptor），可以从请求头中抓取这个 IP，并将其注入到 Session 的属性中，
+因为有了 Nginx 的 IP 一致性 Hash 保证，同一个 IP 的连接必然会落到同一个 JVM 实例上，所以直接用本地内存技术（ConcurrentHashMap + AtomicInteger）
+就能精准做到单 IP 最多 10（读取配置文件里面的） 个连接，超过10个，发送连接建立过多的消息，不让建立连接。
