@@ -22,7 +22,7 @@ spring:
     virtual:
       enabled: true
 
-使用ConcurrentHashMap保存每个用户的websocket连接集合ConcurrentHashMap<Long, List<Session>>;List里面保存的是房间Id和该用户的连接
+使用ConcurrentHashMap保存每个用户的websocket连接集合ConcurrentHashMap<Long, List<RommSession>>;List里面保存的是房间Id和该用户的连接
 afterConnectionClosed连接断开事件时移除集合里面对应的Session，如果用户下面的Session集合为空则从Map里面移除该用户map.remove(userId)
 
 所有websocket的消息收到后发送到KafKa，消息体包括，发送人，发送时间，房间号，消息类型，消息内容，分区键是房间号用MurmurHash3进行hash，这样尽量分散
