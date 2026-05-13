@@ -1,4 +1,5 @@
 Nginx/OpenResty + mm3)：只负责根据 IP 离散算力，保证相同 IP 收敛在同一个 Pod，同时具备平滑的伸缩容能力
+在 Nginx 层必须使用 一致性哈希（Consistent Hashing，如 hash $remote_addr consistent;），这样扩容时只会影响几分之一的连接，而不是全量重新洗牌
 使用 spring-boot-starter-websocket
 
 server:
